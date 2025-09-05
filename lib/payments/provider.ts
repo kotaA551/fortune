@@ -1,9 +1,22 @@
-// 例: モックの parseWebhook
-import type { NextApiRequest } from 'next';
-import type { WebhookEvent } from './types';
+// lib/payments/provider.ts
+import type { PaymentProvider } from './types';
+import { MockProvider } from './mock';
 
-export async function parseWebhook(req: NextApiRequest): Promise<WebhookEvent | null> {
-  const body = typeof req.body === 'string' ? JSON.parse(req.body) : req.body;
-  if (!body?.type || !body?.orderId) return null;
-  return { type: body.type, orderId: body.orderId } as WebhookEvent;
+/**
+ * 今はモックを返す。将来は環境変数で切り替え:
+ * PAYMENT_PROVIDER = 'mock' | 'gmopg' | 'sbps' など
+ */
+export function getProvider(): PaymentProvider {
+  const name = (process.env.PAYMENT_PROVIDER || 'mock').toLowerCase();
+
+  switch (name) {
+    // case 'gmopg': return new GmoPgProvider();
+    // case 'sbps':  return new SbpsProvider();
+    case 'mock':
+    default:
+      return new MockProvider();
+  }
 }
+
+export type { PaymentProvider } from './types';
+export * from './types';
