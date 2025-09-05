@@ -2,7 +2,6 @@
 import type { NextApiRequest, NextApiResponse } from 'next';
 import { getProvider } from '@/lib/payments/provider';
 import { DB } from '@/lib/db';
-import { generateAndStorePdf } from '@/server/generatePdf';
 import { sendReceiptEmail } from '@/server/mailer';
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
@@ -19,19 +18,33 @@ export default async function handler(req: NextApiRequest, res: NextApiResponse)
     return res.status(400).json({ error: 'invalid event' });
   }
 
+  // ローカル or Vercel で挙動を分ける
+  const isLocal = !process.env.VERCEL;
+
   if (evt.type === 'payment.succeeded') {
     // 1) ステータス反映
     DB.setStatus(evt.orderId, 'paid');
 
-    // 2) PDF 生成 → 保存
+    // 2) PDF の配布URLを決定（ローカルは保存、Vercelは都度生成APIのURL）
     const order = DB.get(evt.orderId);
     if (order) {
-      const pdfUrl = await generateAndStorePdf(order);
-      DB.setPdf(evt.orderId, pdfUrl);
+      let pdfUrl: string;
+
+      if (isLocal) {
+        // ローカル開発: public/reports に保存してURLを返す
+        const { generateAndStorePdfLocal } = await import('@/server/generatePdf');
+        pdfUrl = await generateAndStorePdfLocal(order);
+      } else {
+        // Vercel本番: 永続ストレージ無し → ダウンロードAPIで都度生成
+        pdfUrl = `/api/reports/${order.orderId}`;
+      }
+
+      DB.setPdf(order.orderId, pdfUrl);
 
       // 3) メール送信（失敗しても致命ではない）
       try {
-        await sendReceiptEmail(order, pdfUrl);
+        const base = process.env.APP_BASE_URL || 'https://example.com';
+        await sendReceiptEmail(order, `${base}${pdfUrl}`);
       } catch (e) {
         console.error('email send failed', e);
       }

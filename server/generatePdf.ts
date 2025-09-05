@@ -1,3 +1,4 @@
+// server/generatePdf.ts
 import path from 'path';
 import fs from 'fs';
 import PDFDocument from 'pdfkit';
@@ -7,15 +8,18 @@ import { Order } from '@/lib/db';
 const OUT_DIR = path.join(process.cwd(), 'public', 'reports');
 const FONT_PATH = path.join(process.cwd(), 'public', 'fonts', 'NotoSansJP-Regular.ttf');
 
-if (!fs.existsSync(OUT_DIR)) fs.mkdirSync(OUT_DIR, { recursive: true });
+// ─────────────────────────────────────────────────────────────
+// Vercelでは永続保存できないため：
+// - 共有DL用: generatePdfBuffer() でBufferを返してAPIから配信
+// - ローカル開発のみ: generateAndStorePdfLocal() で public/reports に書き出し
+// ─────────────────────────────────────────────────────────────
 
-export async function generateAndStorePdf(order: Order): Promise<string> {
+export async function generatePdfBuffer(order: Order): Promise<Buffer> {
   const doc = new PDFDocument({ size: 'A4', margin: 48 });
-  const filename = `${order.orderId}.pdf`;
-  const filepath = path.join(OUT_DIR, filename);
-  const stream = fs.createWriteStream(filepath);
-  doc.pipe(stream);
+  const chunks: Buffer[] = [];
+  const stream = doc as unknown as NodeJS.ReadableStream;
 
+  // フォント
   if (fs.existsSync(FONT_PATH)) {
     doc.font(FONT_PATH);
   }
@@ -31,7 +35,7 @@ export async function generateAndStorePdf(order: Order): Promise<string> {
   doc.moveTo(48, doc.y).lineTo(547, doc.y).stroke();
   doc.moveDown();
 
-  // 本文（性別に応じた1セクション + 共通セクション）
+  // 本文
   const sections = buildSections(order);
   for (const s of sections) {
     doc.fontSize(16).text(s.title, { underline: true });
@@ -49,9 +53,58 @@ export async function generateAndStorePdf(order: Order): Promise<string> {
 
   doc.end();
 
-  await new Promise<void>((resolve, reject) => {
-    stream.on('finish', () => resolve());
+  return await new Promise<Buffer>((resolve, reject) => {
+    stream.on('data', (c: Buffer) => chunks.push(c));
+    stream.on('end', () => resolve(Buffer.concat(chunks)));
     stream.on('error', reject);
+  });
+}
+
+// （任意）ローカルだけ保存したい人向け
+export async function generateAndStorePdfLocal(order: Order): Promise<string> {
+  if (!fs.existsSync(OUT_DIR)) fs.mkdirSync(OUT_DIR, { recursive: true });
+
+  const filename = `${order.orderId}.pdf`;
+  const filepath = path.join(OUT_DIR, filename);
+
+  const doc = new PDFDocument({ size: 'A4', margin: 48 });
+  const writeStream = fs.createWriteStream(filepath);
+  doc.pipe(writeStream);
+
+  if (fs.existsSync(FONT_PATH)) {
+    doc.font(FONT_PATH);
+  }
+
+  // 上と同じ本文生成
+  doc.fontSize(22).text('Fortune Report / 占いレポート', { align: 'center' });
+  doc.moveDown();
+  doc.fontSize(12).text(`依頼者: ${order.name}`);
+  doc.text(`生年月日: ${order.birthdate}`);
+  doc.text(`性別: ${mapGender(order.gender)}`);
+  doc.text(`生成日時: ${dayjs().format('YYYY-MM-DD HH:mm')}`);
+  doc.moveDown();
+  doc.moveTo(48, doc.y).lineTo(547, doc.y).stroke();
+  doc.moveDown();
+
+  const sections = buildSections(order);
+  for (const s of sections) {
+    doc.fontSize(16).text(s.title, { underline: true });
+    doc.moveDown(0.2);
+    doc.fontSize(12).text(s.body, { paragraphGap: 10 });
+    doc.moveDown();
+  }
+
+  doc.moveDown();
+  doc.fontSize(10).text(
+    '※本レポートはエンタメ用途の一般的なリーディングであり、医療・法律・投資等の専門助言を提供するものではありません。',
+    { align: 'left' }
+  );
+
+  doc.end();
+
+  await new Promise<void>((resolve, reject) => {
+    writeStream.on('finish', () => resolve());
+    writeStream.on('error', reject);
   });
 
   return `/reports/${filename}`;
@@ -88,7 +141,7 @@ function buildSections(order: Order) {
   ];
 }
 
-function mapGender(g: string | undefined) {
+function mapGender(g?: string) {
   switch (g) {
     case 'female': return '女性';
     case 'male': return '男性';
