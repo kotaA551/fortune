@@ -1,15 +1,9 @@
-import { PaymentProvider } from './types';
-import { MockProvider } from './mock';
+// 例: モックの parseWebhook
+import type { NextApiRequest } from 'next';
+import type { WebhookEvent } from './types';
 
-
-// ここに将来: import { GmoPgProvider } from './gmo'; import { SbpsProvider } from './sbps';
-
-
-export function getProvider(): PaymentProvider {
-const key = process.env.PAYMENT_PROVIDER || 'mock';
-switch (key) {
-// case 'gmo': return new GmoPgProvider();
-// case 'sbps': return new SbpsProvider();
-default: return new MockProvider();
-}
+export async function parseWebhook(req: NextApiRequest): Promise<WebhookEvent | null> {
+  const body = typeof req.body === 'string' ? JSON.parse(req.body) : req.body;
+  if (!body?.type || !body?.orderId) return null;
+  return { type: body.type, orderId: body.orderId } as WebhookEvent;
 }
