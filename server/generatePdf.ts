@@ -11,45 +11,103 @@ const FONT_PATH = path.join(process.cwd(), 'public', 'fonts', 'NotoSansJP-Regula
 
 // カラー（Tailwind系）
 const COLORS = {
-  bgStart: '#fff1f2',   // rose-50
+  bgStart: '#f8fafc',   // slate-50
   bgEnd:   '#f5f3ff',   // violet-50
   card:    '#ffffff',
-  title:   '#8B5CF6',   // violet-500
-  heading: '#EC4899',   // pink-500
-  line:    '#F9A8D4',   // pink-300
+  title:   '#7c3aed',   // violet-600
+  sub:     '#6d28d9',   // violet-700
+  heading: '#db2777',   // rose-600
+  line:    '#fda4af',   // rose-300
   body:    '#374151',   // gray-700
-  meta:    '#6B7280',   // gray-500
-  disclaimer: '#6B7280'
+  meta:    '#6b7280',   // gray-500
+  accent:  '#a78bfa',   // violet-300 (左バー)
+  chip:    '#fce7f3',   // pink-100
+  disclaimer: '#6b7280'
 };
 
-// 背景とカード
+// 余白を少し広げる（全ページで統一して使う）
+const PAGE_MARGIN = 56;
+
+// 背景
 function paintBackground(doc: PDFKit.PDFDocument) {
   const { width, height } = doc.page;
-  const grad = (doc as any).linearGradient(0, 0, width, height);
-  grad.stop(0, COLORS.bgStart);
-  grad.stop(1, COLORS.bgEnd);
+  const g = (doc as any).linearGradient(0, 0, width, height);
+  g.stop(0, COLORS.bgStart);
+  g.stop(1, COLORS.bgEnd);
   doc.save();
-  doc.rect(0, 0, width, height);
-  doc.fill(grad);
-  doc.fillOpacity(0.92);
-  doc.roundedRect(36, 36, width - 72, height - 72, 16).fill(COLORS.card);
-  doc.fillOpacity(1);
+  doc.rect(0, 0, width, height).fill(g);
   doc.restore();
 }
 
-// 見出し＆区切り線
-function sectionHeading(doc: PDFKit.PDFDocument, text: string) {
-  doc.moveDown(0.75);
-  doc.fillColor(COLORS.heading).fontSize(15).text(text);
-  doc.moveDown(0.25);
-  doc.strokeColor(COLORS.line).lineWidth(1);
-  const x1 = doc.page.margins.left;
-  const x2 = doc.page.width - doc.page.margins.right;
-  doc.moveTo(x1, doc.y).lineTo(x2, doc.y).stroke();
-  doc.moveDown(0.4);
+// タイトルヒーロー
+function heroHeader(doc: PDFKit.PDFDocument) {
+  const { width } = doc.page;
+  const left = PAGE_MARGIN;
+  const right = width - PAGE_MARGIN;
+  const w = right - left;
+
+  doc.save();
+  doc.roundedRect(left, 40, w, 92, 18).fillOpacity(0.95).fill(COLORS.card);
+  doc.fillOpacity(1);
+
+  doc.fillColor(COLORS.title).fontSize(24)
+    .text('Fortune Report / 占いレポート', left + 18, 58, { width: w - 36, align: 'center' });
+  doc.fillColor(COLORS.meta).fontSize(11)
+    .text('PERSONAL READING • MONTHLY INSIGHTS', left + 18, 88, { width: w - 36, align: 'center' });
+  doc.restore();
+
+  doc.moveDown(6);
 }
 
-// --- Fallback テンプレ ---
+// セクションカード（左にアクセントバー＋柔らかいカード）
+function sectionCard(doc: PDFKit.PDFDocument, title: string, body: string) {
+  const { width } = doc.page;
+  const x = PAGE_MARGIN;
+  const maxW = width - PAGE_MARGIN * 2;
+  const yStart = doc.y + 6;
+
+  const yContentStart = yStart + 20;
+
+  // 見出し＋本文を一旦描いて高さを測る
+  doc.fillColor(COLORS.heading).fontSize(14).text(title, x + 18, yContentStart, { width: maxW - 36 });
+  doc.moveDown(0.5);
+
+  const beforeY = doc.y;
+  doc.fillColor(COLORS.body).fontSize(12).lineGap(5)
+    .text(body, x + 18, doc.y, { width: maxW - 36, paragraphGap: 8 });
+  const afterY = doc.y;
+
+  const cardH = Math.max(60, (afterY - yStart) + 16);
+
+  // 背景と左バー
+  doc.save();
+  doc.rect(x + 3, yStart + 3, maxW, cardH).fillOpacity(0.06).fill('#000'); // shadow
+  doc.fillOpacity(0.98).roundedRect(x, yStart, maxW, cardH, 14).fill(COLORS.card);
+  doc.fillOpacity(1).fillColor(COLORS.accent).roundedRect(x, yStart, 6, cardH, 14).fill();
+  doc.restore();
+
+  // 内容をもう一度前面に
+  const saveY = doc.y;
+  doc.y = yContentStart;
+  doc.fillColor(COLORS.heading).fontSize(14).text(`◦ ${title}`, x + 18, doc.y, { width: maxW - 36 });
+  doc.moveDown(0.5);
+  doc.fillColor(COLORS.body).fontSize(12).lineGap(5)
+    .text(body, x + 18, doc.y, { width: maxW - 36, paragraphGap: 8 });
+
+  doc.y = yStart + cardH + 10;
+  if (doc.y < saveY) doc.y = saveY;
+}
+
+
+// ページフッター（ページ番号）
+function footer(doc: PDFKit.PDFDocument, pageNo: number) {
+  const { width, height } = doc.page;
+  doc.fillColor(COLORS.meta).fontSize(10)
+     .text(String(pageNo), 0, height - 32, { width, align: 'center' });
+}
+
+
+// Fallback テンプレ（AI失敗時）
 function buildSections(order: Order) {
   const p = (t: string) =>
     `${t}\n\n` +
@@ -93,71 +151,67 @@ function mapGender(g?: string) {
   }
 }
 
-// --- 本文描画（AI＋フォールバック）---
-async function writeReportContentAI(doc: PDFKit.PDFDocument, order: Order) {
+// ── 本文レンダリング（AI＋フォールバック・モダンUI） ──
+async function writeReportContentModern(doc: PDFKit.PDFDocument, order: Order) {
   if (fs.existsSync(FONT_PATH)) doc.font(FONT_PATH);
-
   paintBackground(doc);
+  heroHeader(doc);
 
-  // タイトル
-  doc.fillColor(COLORS.title).fontSize(22)
-     .text('Fortune Report / 占いレポート', { align: 'center' });
-  doc.moveDown(0.8);
+  // ...（メタカード等そのまま）...
 
-  // メタ
-  doc.fillColor(COLORS.meta).fontSize(11);
-  doc.text(`依頼者: ${order.name}`);
-  doc.text(`生年月日: ${order.birthdate}`);
-  doc.text(`性別: ${mapGender(order.gender)}`);
-  doc.text(`生成日時: ${dayjs().format('YYYY-MM-DD HH:mm')}`);
-  doc.moveDown(0.6);
-
-  // 区切り線
-  doc.strokeColor(COLORS.line).lineWidth(1);
-  const x1 = doc.page.margins.left;
-  const x2 = doc.page.width - doc.page.margins.right;
-  doc.moveTo(x1, doc.y).lineTo(x2, doc.y).stroke();
-  doc.moveDown(0.6);
-
-  // AI生成（失敗時はテンプレ）
+  // AI 生成（失敗時テンプレ）
   let sections: { title: string; body: string }[];
   try {
     sections = await generateFortuneSectionsAI({
-      name: order.name,
-      gender: order.gender,
-      birthdate: order.birthdate
+      name: order.name, gender: order.gender, birthdate: order.birthdate
     });
   } catch {
     sections = buildSections(order);
   }
 
-  // 本文
-  doc.fillColor(COLORS.body).fontSize(12).lineGap(4);
-  sections.forEach((s, idx) => {
-    sectionHeading(doc, s.title);
-    doc.text(s.body, { paragraphGap: 10 });
-    if (idx !== sections.length - 1) doc.moveDown(0.2);
+  // ← ここでページ番号を管理
+  let pageNo = 1;
+
+  sections.forEach((s) => {
+    // 改ページ前にフッターを描く
+    if (doc.y > doc.page.height - 220) {
+      footer(doc, pageNo);
+      doc.addPage({
+        size: 'A4',
+        margins: { top: PAGE_MARGIN, bottom: PAGE_MARGIN, left: PAGE_MARGIN, right: PAGE_MARGIN },
+      });
+      pageNo++;                               // ← ページ番号を進める
+      if (fs.existsSync(FONT_PATH)) doc.font(FONT_PATH);
+      paintBackground(doc);
+    }
+    sectionCard(doc, s.title, s.body);
   });
 
   // 免責
-  doc.moveDown(0.8);
-  doc.fillColor(COLORS.disclaimer).fontSize(10)
+  doc.moveDown(0.6);
+  doc.fillColor(COLORS.meta).fontSize(10)
     .text('※本レポートはエンタメ用途の一般的なリーディングであり、医療・法律・投資等の専門助言を提供するものではありません。');
+
+  // 最終ページのフッター
+  footer(doc, pageNo);
 }
+
 
 // --- PDFバッファ生成（一本化）---
 export async function generatePdfBuffer(order: Order): Promise<Buffer> {
-  const doc = new PDFDocument({ size: 'A4', margin: 48 });
-  const chunks: Buffer[] = [];
+  const doc = new PDFDocument({
+    size: 'A4',
+    margins: { top: PAGE_MARGIN, bottom: PAGE_MARGIN, left: PAGE_MARGIN, right: PAGE_MARGIN },
+  });
 
-  // data/end/error は end 前にリッスン
+  const chunks: Buffer[] = [];
   doc.on('data', (c: Buffer) => chunks.push(c));
   const done = new Promise<Buffer>((resolve, reject) => {
     doc.on('end', () => resolve(Buffer.concat(chunks)));
     doc.on('error', reject);
   });
 
-  await writeReportContentAI(doc, order);
+  await writeReportContentModern(doc, order);
   doc.end();
   return done;
 }
@@ -169,11 +223,14 @@ export async function generateAndStorePdfLocal(order: Order): Promise<string> {
   const filename = `${order.orderId}.pdf`;
   const filepath = path.join(OUT_DIR, filename);
 
-  const doc = new PDFDocument({ size: 'A4', margin: 48 });
+  const doc = new PDFDocument({
+    size: 'A4',
+    margins: { top: PAGE_MARGIN, bottom: PAGE_MARGIN, left: PAGE_MARGIN, right: PAGE_MARGIN },
+  });
   const writeStream = fs.createWriteStream(filepath);
   doc.pipe(writeStream);
 
-  await writeReportContentAI(doc, order);
+  await writeReportContentModern(doc, order);
   doc.end();
 
   await new Promise<void>((resolve, reject) => {
