@@ -1,5 +1,6 @@
 // pages/index.tsx
 import { useState } from 'react';
+import Link from 'next/link';
 
 export default function Home() {
   const [loading, setLoading] = useState(false);
@@ -156,8 +157,8 @@ export default function Home() {
       <footer className="mx-auto w-full max-w-5xl px-6 pb-10">
         <div className="rounded-2xl border border-rose-100 bg-white/60 p-4 text-center text-xs text-rose-700/70 backdrop-blur">
           <nav className="mb-2 flex justify-center gap-4 text-[11px] text-rose-600/80 underline-offset-2 hover:[&_a]:text-rose-800">
-            <a href="/terms">特定商取引法に基づく表記</a>
-            <a href="/privacy">プライバシーポリシー</a>
+            <Link href="/terms" className="hover:text-rose-800">特定商取引法に基づく表記</Link>
+            <Link href="/privacy" className="hover:text-rose-800">プライバシーポリシー</Link>
           </nav>
           © {new Date().getFullYear()} Fortune Atelier
         </div>

@@ -1,4 +1,6 @@
 // pages/privacy.tsx
+import Link from 'next/link';
+
 export default function Privacy() {
   return (
     <main className="min-h-screen bg-gradient-to-b from-rose-50 via-pink-50 to-violet-50 px-6 py-10">
@@ -94,9 +96,9 @@ export default function Privacy() {
         </section>
 
         <div className="mt-8 text-right">
-          <a href="/" className="text-sm text-rose-600 underline underline-offset-2 hover:text-rose-800">
+          <Link href="/" className="text-sm text-rose-600 underline underline-offset-2 hover:text-rose-800">
             ← トップへ戻る
-          </a>
+          </Link>
         </div>
       </div>
     </main>
