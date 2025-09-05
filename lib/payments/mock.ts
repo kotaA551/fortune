@@ -7,7 +7,6 @@ import {
   WebhookEvent,
 } from './types';
 
-// モック: チェックアウトURLは自サイトの簡易ページへ
 export class MockProvider implements PaymentProvider {
   async createCheckout(payload: CheckoutPayload): Promise<CheckoutResponse> {
     const orderId = 'ord_' + Math.random().toString(36).slice(2, 10);
@@ -20,43 +19,48 @@ export class MockProvider implements PaymentProvider {
       amount: String(payload.amount),
     });
     return {
-      checkoutUrl: `/checkout/${orderId}?` + qs.toString(),
+      checkoutUrl: `/checkout/${orderId}?${qs.toString()}`,
       orderId,
     };
   }
 
-  // ESLint対策: any禁止 → NextApiRequest を使う
   async parseWebhook(req: NextApiRequest): Promise<WebhookEvent | null> {
-    // Vercel/Nextの都合で body が string のこともある
-    const raw = typeof req.body === 'string' ? safeJSON(req.body) : req.body ?? {};
-
-    // 互換: { type: 'payment.succeeded'|'payment.failed', orderId }
-    if (isWebhookByType(raw)) {
-      return { type: raw.type, orderId: raw.orderId };
+    const rawBody = typeof req.body === 'string' ? safeJSON(req.body) : (req.body ?? {});
+    if (isWebhookByType(rawBody)) {
+      return { type: rawBody.type, orderId: rawBody.orderId };
     }
-
-    // 互換: { orderId, ok: boolean }  ← 旧モックUI
-    if (isWebhookByOk(raw)) {
-      return { type: raw.ok ? 'payment.succeeded' : 'payment.failed', orderId: raw.orderId };
+    if (isWebhookByOk(rawBody)) {
+      return { type: rawBody.ok ? 'payment.succeeded' : 'payment.failed', orderId: rawBody.orderId };
     }
-
     return null;
   }
 }
 
-// ---- helpers ----
+/* ---------- helpers ---------- */
+
 function safeJSON(s: string): unknown {
   try { return JSON.parse(s); } catch { return {}; }
 }
 
-function isWebhookByType(x: unknown): x is { type: 'payment.succeeded' | 'payment.failed'; orderId: string } {
-  return !!x &&
-    typeof (x as any).orderId === 'string' &&
-    ((x as any).type === 'payment.succeeded' || (x as any).type === 'payment.failed');
+function isRecord(x: unknown): x is Record<string, unknown> {
+  return typeof x === 'object' && x !== null;
 }
 
-function isWebhookByOk(x: unknown): x is { orderId: string; ok: boolean } {
-  return !!x &&
-    typeof (x as any).orderId === 'string' &&
-    typeof (x as any).ok === 'boolean';
+function isWebhookByType(
+  x: unknown
+): x is { type: 'payment.succeeded' | 'payment.failed'; orderId: string } {
+  if (!isRecord(x)) return false;
+  const t = x['type'];
+  const id = x['orderId'];
+  const validType = t === 'payment.succeeded' || t === 'payment.failed';
+  return validType && typeof id === 'string';
+}
+
+function isWebhookByOk(
+  x: unknown
+): x is { orderId: string; ok: boolean } {
+  if (!isRecord(x)) return false;
+  const id = x['orderId'];
+  const ok = x['ok'];
+  return typeof id === 'string' && typeof ok === 'boolean';
 }
