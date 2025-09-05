@@ -4,7 +4,7 @@ import OpenAI from "openai";
 export type Section = { title: string; body: string };
 
 const client = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY!, // Vercelの環境変数名これでOK
+  apiKey: process.env.OPENAI_API_KEY!,
 });
 
 export async function generateFortuneSectionsAI(order: {
@@ -46,47 +46,63 @@ export async function generateFortuneSectionsAI(order: {
     max_output_tokens: 4000,
   });
 
-  // まずはそのままパース
   const raw = resp.output_text ?? "";
+
   const parsed = safeParseSections(raw, heads);
   if (parsed) return parsed;
 
-  // だめなら配列っぽい最外 [ ... ] を正規表現で抜き出し→再パース
+  // JSONが前後に混ざった場合の救済
   const m = raw.match(/\[[\s\S]*\]/);
   if (m) {
     const parsed2 = safeParseSections(m[0], heads);
     if (parsed2) return parsed2;
   }
 
-  // 最後の砦：テンプレ（被り文回避のため軽くブレンド）
   console.warn("[fortune] AI JSON parse failed. Using template sections.");
   return buildTemplate(order, heads);
 }
 
-// ---------- helpers ----------
+/* ---------- helpers ---------- */
+
+function isRecord(v: unknown): v is Record<string, unknown> {
+  return typeof v === "object" && v !== null;
+}
+function isSection(v: unknown): v is Section {
+  return isRecord(v)
+    && typeof v.title === "string"
+    && typeof v.body === "string";
+}
 
 function safeParseSections(text: string, heads: string[]): Section[] | null {
   try {
-    const obj = JSON.parse(text);
-    const arr: any[] = Array.isArray(obj) ? obj : obj?.sections;
-    if (!Array.isArray(arr)) return null;
+    const obj: unknown = JSON.parse(text);
 
-    // タイトル→セクションのMap
+    let arrUnknown: unknown;
+    if (Array.isArray(obj)) {
+      arrUnknown = obj;
+    } else if (isRecord(obj) && Array.isArray(obj.sections)) {
+      arrUnknown = obj.sections;
+    } else {
+      return null;
+    }
+
+    const arr = arrUnknown as unknown[];
     const map = new Map<string, Section>();
     for (const item of arr) {
-      if (item && typeof item.title === "string" && typeof item.body === "string") {
-        map.set(item.title.trim(), { title: item.title.trim(), body: cleanup(item.body) });
+      if (isSection(item)) {
+        map.set(item.title.trim(), {
+          title: item.title.trim(),
+          body: cleanup(item.body),
+        });
       }
     }
 
-    // 順序保証＆穴埋め
     const ordered: Section[] = heads.map(h => map.get(h) ?? { title: h, body: "" });
 
-    // 最低限の妥当性（半分以上が空なら失敗扱い）
     const nonEmpty = ordered.filter(s => s.body.length > 40).length;
     if (nonEmpty < Math.ceil(heads.length / 2)) return null;
 
-    // 「今月のアクション」だけは箇条書きっぽく整える
+    // 箇条書き整形
     const last = ordered[ordered.length - 1];
     if (last.title === "今月のアクション") {
       last.body = normalizeBullets(last.body);
@@ -99,7 +115,7 @@ function safeParseSections(text: string, heads: string[]): Section[] | null {
 }
 
 function cleanup(s: string): string {
-  return (s ?? "")
+  return s
     .replace(/\r/g, "")
     .replace(/[ \t]+\n/g, "\n")
     .replace(/\n{3,}/g, "\n\n")
@@ -107,12 +123,13 @@ function cleanup(s: string): string {
 }
 
 function normalizeBullets(s: string): string {
-  const lines = s.split(/\n+/)
-    .map(l => l.replace(/^[-•・\*]\s?/, "").trim())
-    .filter(Boolean)
+  const lines = s
+    .split(/\n+/)
+    .map(l => l.replace(/^[-•・*]\s?/, "").trim())
+    .filter(l => l.length > 0)
     .slice(0, 6);
-  if (!lines.length) return s;
-  return lines.map(l => `・${l}`).join("\n");
+
+  return lines.length ? lines.map(l => `・${l}`).join("\n") : s;
 }
 
 function buildTemplate(order: { gender?: string }, heads: string[]): Section[] {
@@ -133,7 +150,14 @@ function buildTemplate(order: { gender?: string }, heads: string[]): Section[] {
     "仕事運": p("集中と成果"),
     "金運": p("価値と交換"),
     "健康運": p("休息と回復"),
-    "今月のアクション": ["朝の10分散歩","情報の断捨離","水分摂取の見直し","睡眠の固定化","小さな投資は計画してから","週1回のセルフリセット"].map(x=>`・${x}`).join("\n"),
+    "今月のアクション": [
+      "朝の10分散歩",
+      "情報の断捨離",
+      "水分摂取の見直し",
+      "睡眠の固定化",
+      "小さな投資は計画してから",
+      "週1回のセルフリセット",
+    ].map(x => `・${x}`).join("\n"),
   };
 
   return heads.map(h => ({ title: h, body: data[h] ?? "" }));
